@@ -14,6 +14,10 @@ mongoose.connect(dbUrl, {useNewUrlParser: true})
 
 app.use(route)
 
+app.all("*",function(req,res){
+    return res.status(404).send({status:false,message:"page not found"})
+})
+
 app.listen(port, () =>{
     console.log(`Express app ruuning on PORT: ${port}`)
 })

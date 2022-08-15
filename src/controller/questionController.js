@@ -61,47 +61,49 @@ const createQuestion = async (req, res) => {
 
 const getQuestions = async (req, res) => {
     try {
-        let tag, sort
+        let data = req.query
+        data.isDeleted = false
 
-        if (req.query.tag)
-            tag = req.query.tag.split(/[, '"+-;]+/).map(x => { return x.trim() && { tag: x } })
+        let {sort,tag} = data
+        let sortValue=0
 
-        if (isValid(req.query.askedBy) && !mongoose.isValidObjectId(req.query.askedBy))
-            delete req.query.askedBy
-
-        let total = [...tag || [], { askedBy: req.query.askedBy || null }]
-
-        if (isValid(req.query.sort) && req.query.sort.trim() == 'descending') sort = -1
-        else sort = 1
-
-        delete req.query.sort
-
-        if (!Object.keys(req.query).length) {
-            let questions = await questionModel.find({ isDeleted: false }).lean()
-            if (!questions.length)
-                return res.status(404).send({ status: false, msg: "No Questions found." })
-            let answers = await answerModel.find({ questionId: questions, isDeleted: false }, { isDeleted: 0, createdAt: 0, updatedAt: 0, __v: 0 }).sort({ createdAt: -1 }).lean()
-            if (answers.length) {
-                for (let i in questions) {
-                    questions[i]['answers'] = answers.filter(x => x.questionId.toString() == questions[i]._id)
-                    if (!questions[i]['answers'].length)
-                        questions[i]['answers'] = "No Answers Present for this Question yet."
-                }
-            }
-            return res.status(200).send({ status: true, data: questions })
+        let temp=0
+        if (data.tag) {
+            let tags= data.tag.split(',').map(x => x.trim())
+            data.tag={$all : tags}
+            temp=1
         }
-        let questions = await questionModel.find({ $or: total, isDeleted: false, isPublished: true }).sort({ createdAt: sort }).lean()
-        if (!questions.length)
-            return res.status(404).send({ status: false, msg: "No Questions found." })
-        let answers = await answerModel.find({ questionId: questions, isDeleted: false }, { isDeleted: 0, createdAt: 0, updatedAt: 0, __v: 0 }).sort({ createdAt: -1 }).lean()
-        if (answers.length) {
-            for (let i in questions) {
-                questions[i]['answers'] = answers.filter(x => x.questionId.toString() == questions[i]._id)
-                if (!questions[i]['answers'].length)
-                    questions[i]['answers'] = "No Answers Present for this Question yet."
+        
+        if (sort) {
+            if (!(sort.toLowerCase() == "ascending" || sort.toLowerCase() == "descending")) {
+                return res.status(400).send({
+                    message: `Only 'ascending' & 'descending' are allowed to sort.`,
+                });
+            }
+            if (sort.toLowerCase() === "ascending") {
+                sortValue = 1;
+            }
+
+            if (sort.toLowerCase() === "descending") {
+                sortValue = -1;
             }
         }
-        return res.status(200).send({ status: true, data: questions })
+        
+
+        let findQuestions = await questionModel.find(data).lean().sort({ createdAt: sortValue }).select({ createdAt: 0, updatedAt: 0, __v: 0 });
+  
+        if (findQuestions.length == 0) {
+            if(temp) return res.status(400).send({status: false, message: `No Question found by tags - ${tag}`,});
+            else return res.status(400).send({status: false, message: `No Question found`});
+        }
+        for (i in findQuestions) {
+          let answer = await answerModel.find({ questionId: findQuestions[i]._id }).select({ text: 1, answeredBy: 1 });
+  
+          findQuestions[i].answers = answer;
+        }
+
+  
+      return res.status(200).send({ status: true, message: "Questions List", data: findQuestions });
 
     } catch (err) {
         console.log(err.message)
@@ -136,7 +138,7 @@ const updateQuestion = async (req, res) => {
     let qId = req.params.questionId.trim()
 
     try {
-        
+
         if (!mongoose.isValidObjectId(qId))
             return res.status(400).send({ status: false, message: 'Invalid Quetion Objectid.' })
 
@@ -151,7 +153,7 @@ const updateQuestion = async (req, res) => {
         if (!Object.keys(data).length)
             return res.status(400).send({ status: false, message: "You didn't provide any data to update." })
 
-        let temp={}
+        let temp = {}
         if (data.description)
             temp.description = data.description
 
@@ -163,7 +165,7 @@ const updateQuestion = async (req, res) => {
             temp.tag = filterTag
         }
 
-        if(Object.keys(temp)==0)      return res.status(400).send({ status: false, message: "you can update only tag and description" })
+        if (Object.keys(temp) == 0) return res.status(400).send({ status: false, message: "you can update only tag and description" })
 
 
         let updatedQuestion = await questionModel.findOneAndUpdate({ _id: qId, isDeleted: false },
@@ -172,7 +174,7 @@ const updateQuestion = async (req, res) => {
                 $addToSet: { tag: { $each: temp.tag || [] } }
             },
             { new: true })
-      
+
         res.status(201).send({ status: true, message: 'Successfully Updated', data: updatedQuestion })
     } catch (err) {
         console.log(err.message)
